@@ -54,10 +54,10 @@ def lodder(a,b):
     vertices_path = "training/"+b
     vertices_x, vertices_mapping = load_node_csv(
         vertices_path, index_col='atom_index', encoders={
-            'atom_type': IdentityEncoder(dtype=torch.long),
-            'residue_index': IdentityEncoder(dtype=torch.long),
-            'residue_type': IdentityEncoder(dtype=torch.long),
-            'residue_surface_class': IdentityEncoder(dtype=torch.long),
+            'atom_type': IdentityEncoder(dtype=torch.float),
+            'residue_index': IdentityEncoder(dtype=torch.float),
+            'residue_type': IdentityEncoder(dtype=torch.float),
+            'residue_surface_class': IdentityEncoder(dtype=torch.float),
         })
     vertices_label, vertices = load_node_csv(
         vertices_path, index_col='atom_index', encoders={
@@ -75,9 +75,9 @@ def lodder(a,b):
     a = []
     for x in vertices_label:
         for y in x:
-            print(y)
             a.append(y)
-    return Data(x=vertices_x,edge_index=edge_index,edge_attr=edge_label,y=a)
+    xs = torch.as_tensor(a)
+    return Data(x=vertices_x,edge_index=edge_index,edge_attr=edge_label,y=xs)
 class MyOwnDataset(InMemoryDataset):
     def __init__(self,root, transform=None, pre_transform=None):
         super().__init__(root, transform, pre_transform)
@@ -87,7 +87,6 @@ class MyOwnDataset(InMemoryDataset):
         data_list = []
         for i in range(int(len(arr)/2)):
             data = lodder(arr[i*2],arr[i*2+1])
-            data = data.to(device)
             data_list.append(data)
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
@@ -99,11 +98,13 @@ class MyOwnDataset(InMemoryDataset):
         torch.save((data, slices), 'tensor.pt')
 dataset = MyOwnDataset('.')
 dataset.savedataset()
+dataset = MyOwnDataset('.')
 data = dataset[0]
 data.to(device)
 num_hidden_nodes = 128
 num_node_features = data.num_node_features
 num_classes = 2
+
 class Net(torch.nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -122,12 +123,20 @@ class Net(torch.nn.Module):
 net = Net().to(device)
 
 optimizer = torch.optim.Adam(net.parameters(), lr=1e-2)
-for i in range(1000):
-    output = net(data)
-    loss = F.cross_entropy(output, data.y)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+for i in range(10):
+    list = []
+    for datas in dataset:
+        datas.to(device)
+        net.train()
+        output = net(datas)
+        loss = F.cross_entropy(output, datas.y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        list.append((torch.argmax(output, dim=1) == datas.y).float().mean())
+    print("Epoch",i,":",sum(list) / len(list))
+    torch.save(net, "model1.pt")
 
-    if i % 100 == 0:
-        print('Accuracy: ', (torch.argmax(output, dim=1)==data.y).float().mean())
+
+model = torch.load("model1.pt")
+model.eval()
