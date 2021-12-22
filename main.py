@@ -121,22 +121,20 @@ class Net(torch.nn.Module):
         return F.log_softmax(x, dim=1)
 
 net = Net().to(device)
-
 optimizer = torch.optim.Adam(net.parameters(), lr=1e-2)
-for i in range(10):
-    list = []
-    for datas in dataset:
-        datas.to(device)
-        net.train()
-        output = net(datas)
-        loss = F.cross_entropy(output, datas.y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        list.append((torch.argmax(output, dim=1) == datas.y).float().mean())
-    print("Epoch",i,":",sum(list) / len(list))
-    torch.save(net, "model1.pt")
-
-
-model = torch.load("model1.pt")
+def train():
+    for i in range(10):
+        list = []
+        for datas in dataset:
+            datas.to(device)
+            net.train()
+            output = net(datas)
+            loss = F.cross_entropy(output, datas.y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            list.append((torch.argmax(output, dim=1) == datas.y).float().mean())
+        print("Epoch",i,":",sum(list) / len(list))
+        torch.save(net, "model1.pt")
+net = torch.load("model1.pt")
 model.eval()
