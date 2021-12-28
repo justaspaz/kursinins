@@ -96,8 +96,7 @@ class MyOwnDataset(InMemoryDataset):
 
         data, slices = self.collate(data_list)
         torch.save((data, slices), 'tensor.pt')
-dataset = MyOwnDataset('.')
-dataset.savedataset()
+
 dataset = MyOwnDataset('.')
 data = dataset[0]
 data.to(device)
@@ -110,6 +109,20 @@ class Net(torch.nn.Module):
         super(Net, self).__init__()
         self.conv1 = GCNConv(num_node_features, num_hidden_nodes)
         self.conv2 = GCNConv(num_hidden_nodes, num_classes)
+
+    def forward(self, data):
+        x, edge_index = data.x, data.edge_index
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training)
+        x = self.conv2(x, edge_index)
+
+        return F.log_softmax(x, dim=1)
+class Net2(torch.nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = SAGEConv(num_node_features, num_hidden_nodes)
+        self.conv2 = SAGEConv(num_hidden_nodes, num_classes)
 
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
@@ -134,6 +147,7 @@ def train():
             loss.backward()
             optimizer.step()
             list.append((torch.argmax(output, dim=1) == datas.y).float().mean())
+
         print("Epoch",i,":",sum(list) / len(list))
         torch.save(net, "model1.pt")
 net = torch.load("model1.pt")
