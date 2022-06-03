@@ -254,7 +254,6 @@ def test3():
     loader = DataLoader(test_dataset, batch_size=5, shuffle=True)
     net2.eval()
     a = 0
-    b = 0
     d = 0
     for batch in loader:
         batch.to(device)
@@ -262,10 +261,8 @@ def test3():
         batch = transform(batch)
         pred = net2(batch).argmax(dim=1)
         d = d + abs((f1_score(batch.y.cpu().numpy(), pred.cpu().numpy())))
-        b = b + abs((f1_score(batch.y.cpu().numpy(), pred.cpu().numpy())))
         a = a + abs((matthews_corrcoef(batch.y.cpu().numpy(), pred.cpu().numpy())))
     print(a/len(loader))
-    print(b/len(loader))
     print(d/len(loader))
 args = my_parser.parse_args()
 input = args.number
