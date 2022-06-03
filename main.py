@@ -152,14 +152,11 @@ class MyOwnDataset3(InMemoryDataset):
         data, slices = self.collate(data_list)
         torch.save((data, slices), 'tensor3.pt')
 dataset = MyOwnDataset1('.')
-dataset.savedataset()
-dataset = MyOwnDataset1('.')
+
 validation_dataset = MyOwnDataset2('.')
-validation_dataset.savedataset()
-validation_dataset = MyOwnDataset2('.')
+
 test_dataset = MyOwnDataset3('.')
-test_dataset.savedataset()
-test_dataset = MyOwnDataset3('.')
+
 data = dataset[0]
 data.to(device)
 num_hidden_nodes = 64
