@@ -13,8 +13,17 @@ from torch_geometric.data import Dataset,InMemoryDataset
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
 from torch_geometric.datasets import Planetoid
-import torch_geometric.transforms as T
 import argparse
+from torch_geometric.nn import GATConv
+from torch_geometric.nn import GATv2Conv
+import torch_geometric.transforms as T
+from torch.nn.functional import normalize
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.metrics import f1_score
+from sklearn.metrics import matthews_corrcoef
+from sklearn.metrics import accuracy_score
+from numpy import asarray
+from sklearn.preprocessing import OneHotEncoder as OneHot
 
 device = torch.device('cuda')
 def readAllFileNames(text):
@@ -39,7 +48,15 @@ class IdentityEncoder(object):
         self.dtype = dtype
 
     def __call__(self, df):
-        return torch.from_numpy(df.values).view(-1, 1).to(self.dtype)
+        return normalize(torch.from_numpy(df.values).view(-1, 1).to(torch.float),p=5.0).to(self.dtype)
+class OneHotEncoder(object):
+    # The 'IdentityEncoder' takes the raw column values and converts them to
+    # PyTorch tensors.
+    def __init__(self, dtype=None):
+        self.dtype = dtype
+
+    def __call__(self, df):
+        return F.one_hot(torch.from_numpy(df.values)).to(self.dtype)
 def load_edge_csv(path, src_index_col, src_mapping, dst_index_col, dst_mapping,
                   encoders=None, **kwargs):
     df = pd.read_csv(path, **kwargs)
@@ -56,9 +73,9 @@ def lodder(a,b,text):
     vertices_path = text+"/"+b
     vertices_x, vertices_mapping = load_node_csv(
         vertices_path, index_col='atom_index', encoders={
-            'atom_type': IdentityEncoder(dtype=torch.float),
+            'atom_type': OneHotEncoder(dtype=torch.float), ##one hot encoding
             'residue_index': IdentityEncoder(dtype=torch.float),
-            'residue_type': IdentityEncoder(dtype=torch.float),
+            'residue_type': OneHotEncoder(dtype=torch.float), ##one hot encoding
             'residue_surface_class': IdentityEncoder(dtype=torch.float),
         })
     vertices_label, vertices = load_node_csv(
@@ -135,11 +152,17 @@ class MyOwnDataset3(InMemoryDataset):
         data, slices = self.collate(data_list)
         torch.save((data, slices), 'tensor3.pt')
 dataset = MyOwnDataset1('.')
+dataset.savedataset()
+dataset = MyOwnDataset1('.')
 validation_dataset = MyOwnDataset2('.')
+validation_dataset.savedataset()
+validation_dataset = MyOwnDataset2('.')
+test_dataset = MyOwnDataset3('.')
+test_dataset.savedataset()
 test_dataset = MyOwnDataset3('.')
 data = dataset[0]
 data.to(device)
-num_hidden_nodes = 128
+num_hidden_nodes = 64
 num_node_features = data.num_node_features
 num_classes = 2
 
@@ -150,7 +173,7 @@ class Net(torch.nn.Module):
         self.conv2 = GCNConv(num_hidden_nodes, num_classes)
 
     def forward(self, data):
-        x, edge_index = data.x, data.edge_index
+        x, edge_index, edge_attr = data.x, data.edge_index,data.edge_attr
         x = self.conv1(x, edge_index)
         x = F.relu(x)
         x = F.dropout(x, training=self.training)
@@ -159,114 +182,96 @@ class Net(torch.nn.Module):
         return F.log_softmax(x, dim=1)
 class Net2(torch.nn.Module):
     def __init__(self):
-        super(Net2, self).__init__()
-        self.conv1 = SAGEConv(num_node_features, num_hidden_nodes)
-        self.conv2 = SAGEConv(num_hidden_nodes, num_classes)
+        super().__init__()
+        self.conv1 = GATv2Conv(num_node_features, 16, heads=16,
+                             dropout=0.1).jittable()
+        self.conv3 = GATv2Conv(256, 8, heads=8,
+                               dropout=0.1).jittable()
+        self.conv2 = GATv2Conv(64, num_classes, heads=1,
+                             dropout=0.1).jittable()
 
     def forward(self, data):
-        x, edge_index = data.x, data.edge_index
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = F.dropout(x, training=self.training)
+        x, edge_index, edge_attr = data.x, data.edge_index,data.edge_attr
+        x = F.dropout(x, p=0.6, training=self.training)
+        x = F.elu(self.conv1(x, edge_index))
+        x = F.dropout(x, p=0.6, training=self.training)
+        x = F.elu(self.conv3(x, edge_index))
+        x = F.dropout(x, p=0.6, training=self.training)
         x = self.conv2(x, edge_index)
-
         return F.log_softmax(x, dim=1)
 
 net = Net().to(device)
 net2 = Net2().to(device)
-optimizer = torch.optim.Adam(net.parameters(), lr=0.1)
-optimizer2 = torch.optim.Adam(net2.parameters(), lr=0.1)
-def train():
-    for i in range(10):
-        list = []
-        lossList = []
-        for datas in dataset:
-            datas.to(device)
-            net.train()
-            output = net(datas)
-            loss = F.cross_entropy(output, datas.y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            lossList.append(loss.item())
-        for datas in validation_dataset:
-            datas.to(device)
-            net.eval()
-            output = net(datas)
-            loss = F.cross_entropy(output, datas.y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            list.append((torch.argmax(output, dim=1) == datas.y).float().mean())
-        print("Epoch",i,":",sum(list) / len(list))
-        print("Epoch loss", i, ":", sum(lossList) / len(lossList))
-        torch.save(net, "model1.pt")
-def train2():
-    for i in range(10):
-        list = []
-        lossList = []
-        for datas in dataset:
-            datas.to(device)
-            net2.train()
-            output = net2(datas)
-            loss = F.cross_entropy(output, datas.y)
-            optimizer2.zero_grad()
-            loss.backward()
-            optimizer2.step()
-            lossList.append(loss.item())
-        for datas in validation_dataset:
-            datas.to(device)
-            net2.eval()
-            output = net2(datas)
-            loss = F.cross_entropy(output, datas.y)
-            optimizer2.zero_grad()
-            loss.backward()
-            optimizer2.step()
-            list.append((torch.argmax(output, dim=1) == datas.y).float().mean())
-        print("Epoch",i,":",sum(list) / len(list))
-        print("Epoch loss", i, ":", sum(lossList) / len(lossList))
-        torch.save(net2, "model2.pt")
-def test():
-        list = []
-        lossList =[]
-        for datas in test_dataset:
-            datas.to(device)
-            net.eval()
-            output = net(datas)
-            loss = F.cross_entropy(output, datas.y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            list.append((torch.argmax(output, dim=1) == datas.y).float().mean())
-            lossList.append(loss.item())
-        print("Test:", sum(list) / len(list))
-def test2():
-    list = []
-    lossList = []
-    for datas in test_dataset:
-        datas.to(device)
-        net2.eval()
-        output = net2(datas)
-        loss = F.cross_entropy(output, datas.y)
-        optimizer2.zero_grad()
-        loss.backward()
-        optimizer2.step()
-        list.append((torch.argmax(output, dim=1) == datas.y).float().mean())
-        lossList.append(loss.item())
-    print("Test:", sum(list) / len(list))
+optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
+optimizer2 = torch.optim.Adam(net2.parameters(), lr=0.001)
 
 my_parser = argparse.ArgumentParser(description='List the content of a folder')
 my_parser.add_argument('number',
                        metavar='number',
                        type=int,
                        help='number')
+def train3():
+    loader = DataLoader(dataset, batch_size=5, shuffle=True)
+    loader2 = DataLoader(test_dataset, batch_size=5, shuffle=True)
+    net2.train()
+    c = []
+    e = []
+    lo = []
+    for i in range(1000):
+        lossList = []
+        for batch in loader:
+            batch.to(device)
+            transform = T.ToUndirected()
+            batch = transform(batch)
+            output = net2(batch)
+            loss = F.cross_entropy(output, batch.y)
+            optimizer2.zero_grad()
+            loss.backward()
+            optimizer2.step()
+            lossList.append(loss.item())
+        loader = DataLoader(validation_dataset, batch_size=5, shuffle=True)
+        a = 0
+        b = 0
+        d = 0
+        lol = sum(lossList) / len(lossList)
+        lo.append(lol)
+        for batch in loader2:
+            batch.to(device)
+            transform = T.Compose([T.ToUndirected()])
+            batch = transform(batch)
+            pred = net2(batch).argmax(dim=1)
+            d = d + abs((f1_score(batch.y.cpu().numpy(), pred.cpu().numpy())))
+            b = b + abs((f1_score(batch.y.cpu().numpy(), pred.cpu().numpy())))
+            a = a + abs((matthews_corrcoef(batch.y.cpu().numpy(), pred.cpu().numpy())))
+        print(a/len(loader2))
+        c.append(b/len(loader2))
+        e.append(d / len(loader2))
+    print(c)
+    print(e)
+    print(lo)
+
+def test3():
+    loader = DataLoader(test_dataset, batch_size=5, shuffle=True)
+    net2.eval()
+    a = 0
+    b = 0
+    d = 0
+    for batch in loader:
+        batch.to(device)
+        transform = T.Compose([T.ToUndirected()])
+        batch = transform(batch)
+        pred = net2(batch).argmax(dim=1)
+        d = d + abs((f1_score(batch.y.cpu().numpy(), pred.cpu().numpy())))
+        b = b + abs((f1_score(batch.y.cpu().numpy(), pred.cpu().numpy())))
+        a = a + abs((matthews_corrcoef(batch.y.cpu().numpy(), pred.cpu().numpy())))
+    print(a/len(loader))
+    print(b/len(loader))
+    print(d/len(loader))
 args = my_parser.parse_args()
 input = args.number
 if input == 1:
-    net = torch.load("model1.pt")
     train()
     test()
 if input == 2:
-    net2 = torch.load("model2.pt")
-    train2()
-    test2()
+    train3()
+    test3()
